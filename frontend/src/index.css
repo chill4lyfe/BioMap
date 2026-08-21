@@ -1,0 +1,202 @@
+@import url('https://fonts.googleapis.com/css2?family=Electrolize&family=Geist:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: 'Geist', sans-serif;
+  color: #e2e8f0;
+  background: #02050b;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  background: #02050b;
+}
+
+button,
+select,
+input {
+  font: inherit;
+}
+
+.font-display {
+  font-family: 'Electrolize', sans-serif;
+}
+
+.section-kicker {
+  color: #64748b;
+  font-family: 'Geist', sans-serif;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.panel {
+  border: 1px solid rgba(30, 41, 59, 0.8);
+  border-radius: 10px;
+  background: #080d18;
+  box-shadow: 0 15px 45px rgba(0, 0, 0, 0.2);
+}
+
+.status-pill {
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.08);
+  padding: 3px 7px;
+  color: #60a5fa;
+  font-family: monospace;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+}
+
+.biomap-select {
+  width: 100%;
+  appearance: none;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  background: #080d18;
+  padding: 11px 12px;
+  color: #cbd5e1;
+  outline: none;
+  cursor: pointer;
+}
+
+.biomap-select:focus {
+  border-color: rgba(59, 130, 246, 0.55);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.08);
+}
+
+.timeline-range {
+  width: 100%;
+  height: 5px;
+  appearance: none;
+  border-radius: 999px;
+  cursor: pointer;
+  outline: none;
+}
+
+.timeline-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  border: 2px solid #bfdbfe;
+  border-radius: 50%;
+  background: #2563eb;
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.7);
+}
+
+.timeline-range::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border: 2px solid #bfdbfe;
+  border-radius: 50%;
+  background: #2563eb;
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.7);
+}
+
+.helix-loader {
+  position: relative;
+  width: 74px;
+  height: 74px;
+  perspective: 400px;
+}
+
+.helix-loader span {
+  position: absolute;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px;
+  border-radius: 50%;
+  background: #60a5fa;
+  box-shadow: 0 0 14px rgba(96, 165, 250, 0.8);
+  animation: helix 1.5s ease-in-out infinite;
+}
+
+/* --- Strand 1 (8 dots) --- */
+.helix-loader span:nth-child(1) { top: 12%; animation-delay: -1.4s; }
+.helix-loader span:nth-child(2) { top: 23%; animation-delay: -1.2s; }
+.helix-loader span:nth-child(3) { top: 34%; animation-delay: -1.0s; }
+.helix-loader span:nth-child(4) { top: 45%; animation-delay: -0.8s; }
+.helix-loader span:nth-child(5) { top: 56%; animation-delay: -0.6s; }
+.helix-loader span:nth-child(6) { top: 67%; animation-delay: -0.4s; }
+.helix-loader span:nth-child(7) { top: 78%; animation-delay: -0.2s; }
+.helix-loader span:nth-child(8) { top: 89%; animation-delay: -1.5s; }
+
+/* --- Strand 2 (8 dots, reverse phase) --- */
+.helix-loader span:nth-child(9) { top: 12%; animation-delay: -0.65s; }
+.helix-loader span:nth-child(10) { top: 23%; animation-delay: -0.45s; }
+.helix-loader span:nth-child(11) { top: 34%; animation-delay: -0.25s; }
+.helix-loader span:nth-child(12) { top: 45%; animation-delay: -0.05s; }
+.helix-loader span:nth-child(13) { top: 56%; animation-delay: -1.35s; } 
+.helix-loader span:nth-child(14) { top: 67%; animation-delay: -1.15s; } 
+.helix-loader span:nth-child(15) { top: 78%; animation-delay: -0.95s; } 
+.helix-loader span:nth-child(16) { top: 89%; animation-delay: -0.75s; }
+
+@keyframes helix {
+  0%,
+  100% {
+    transform: translateX(-18px) scale(0.7);
+    opacity: 0.35;
+  }
+
+  50% {
+    transform: translateX(18px) scale(1);
+    opacity: 1;
+  }
+}
+
+/* React Flow */
+.react-flow__controls {
+  box-shadow: none !important;
+}
+
+.react-flow__controls-button {
+  border-bottom: 1px solid #1e293b !important;
+  background: #080d18 !important;
+  fill: #94a3b8 !important;
+}
+
+.react-flow__controls-button:hover {
+  background: #111827 !important;
+}
+
+.react-flow__minimap {
+  overflow: hidden;
+  border-radius: 7px;
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #1e293b;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}

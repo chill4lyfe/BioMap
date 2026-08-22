@@ -37,7 +37,7 @@ export const Timeline: React.FC = () => {
       }
 
       setFrame(frameRef.current + 1);
-    }, 250);
+    }, 500);
 
     return () => window.clearInterval(timer);
   }, [isPlaying, isAnalyzing, totalFrames, setFrame, togglePlay]);

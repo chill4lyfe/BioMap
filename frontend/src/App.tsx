@@ -5,6 +5,7 @@ import {
   Layers3,
   Play,
   RefreshCw,
+  Sparkles,
   Upload,
 } from 'lucide-react';
 
@@ -14,6 +15,9 @@ import { CellCard } from './components/ui/CellCard';
 import { Timeline } from './components/ui/Timeline';
 import { MicroscopeView } from './components/visualizer/MicroscopeView';
 import { LineageGraph } from './components/visualizer/LineageGraph';
+import QCReportModal from './components/QCReportModal';
+import QueryOverlayModal from './components/QueryOverlayModal';
+
 
 const API_BASE = 'http://localhost:8000';
 
@@ -37,7 +41,8 @@ function App() {
 
   const [metadataLoading, setMetadataLoading] = useState(false);
   const [error, setError] = useState('');
-
+  const [isQCOpen, setIsQCOpen] = useState(false);
+  const [isQueryOpen, setIsQueryOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -304,6 +309,14 @@ function App() {
                 </>
               )}
             </button>
+            <button
+             onClick={() => setIsQCOpen(true)}
+             disabled={trackCount === 0}
+             className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-indigo-500/30 bg-indigo-950/40 px-3 py-2 text-xs font-semibold text-indigo-300 hover:bg-indigo-900/60 hover:text-white transition-colors"
+           >
+             <span>🛡️</span>
+             <span>Run Anomaly Report</span>
+            </button>
           </section>
 
           <CellCard />
@@ -338,6 +351,13 @@ function App() {
           </div>
 
           <div className="flex items-center gap-8">
+             <button
+             onClick={() => setIsQueryOpen(true)}
+             className="flex h-9 w-9 items-center justify-center rounded-full border border-blue-500/30 bg-blue-500/10 text-blue-400 transition hover:bg-blue-500/20 hover:text-blue-300"
+             title="Ask Researcher Query"
+              >
+            <Sparkles size={16} />
+          </button>
             <Stat
               label="Tracks"
               value={String(trackCount)}
@@ -373,7 +393,7 @@ function App() {
             {error}
           </div>
         )}
-
+      
         {/* VISUAL WORKSPACE */}
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.35fr)_minmax(420px,0.9fr)]">
           <section className="relative min-h-0 border-r border-slate-800/80">
@@ -390,6 +410,17 @@ function App() {
           <Timeline />
         </section>
       </main>
+      {/* QC REPORT MODAL */}
+      <QueryOverlayModal
+        isOpen={isQueryOpen}
+        onClose={() => setIsQueryOpen(false)}
+        onExecuteQuery={(result: any) => console.log('Researcher Query:', result)}
+      />
+      <QCReportModal isOpen={isQCOpen} onClose={() => setIsQCOpen(false)}
+      datasetName={activeDataset}
+      processingMode={processingMode}
+   />
+        
     </div>
   );
 }

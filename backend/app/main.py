@@ -430,11 +430,11 @@ async def upload_dataset(
     extract_path = DATASETS_DIR / dataset_name
     temp_zip = DATASETS_DIR / f".{dataset_name}.upload.zip"
 
+    # Reset cache and target directory if re-uploading
     if extract_path.exists():
-        return {
-            "message": "Dataset already exists.",
-            "name": dataset_name,
-        }
+        shutil.rmtree(extract_path, ignore_errors=True)
+    if dataset_name in dataset_cache:
+        del dataset_cache[dataset_name]
 
     try:
         with temp_zip.open("wb") as buffer:
@@ -451,19 +451,19 @@ async def upload_dataset(
 
             archive.extractall(extract_path)
 
-        # Some CTC ZIPs may contain one top-level directory.
-        nested = list(extract_path.iterdir())
+        # Flatten single root folder if needed (handles 01, 02, or named wrapper directories)
+        nested = [item for item in extract_path.iterdir() if not item.name.startswith(".")]
 
-        if (
-            len(nested) == 1
-            and nested[0].is_dir()
-            and not (extract_path / "01").exists()
-        ):
+        has_sequence_dir = (
+            (extract_path / "01").exists()
+            or (extract_path / "02").exists()
+            or any(f.suffix.lower() in {".tif", ".tiff"} for f in extract_path.iterdir() if f.is_file())
+        )
+
+        if len(nested) == 1 and nested[0].is_dir() and not has_sequence_dir:
             inner = nested[0]
-
             for item in inner.iterdir():
                 shutil.move(str(item), str(extract_path / item.name))
-
             inner.rmdir()
 
         try:
@@ -505,7 +505,6 @@ async def upload_dataset(
     finally:
         if temp_zip.exists():
             temp_zip.unlink()
-
 
 # ============================================================
 # FRAME IMAGE API
@@ -584,16 +583,10 @@ def run_pipeline(
     request: PipelineRequest,
 ):
     dataset = get_dataset(dataset_name)
-
     mode = normalise_mode(request.mode)
-
     max_frames = dataset.frame_count(sequence_id)
 
-    start_frame = max(
-        0,
-        min(request.start_frame, max_frames - 1),
-    )
-
+    start_frame = max(0, min(request.start_frame, max_frames - 1))
     end_frame = (
         max_frames
         if request.end_frame is None
@@ -609,53 +602,28 @@ def run_pipeline(
     # --------------------------------------------------------
     # SEGMENTER
     # --------------------------------------------------------
-
     if mode == "basic":
         segmenter = ClassicalSegmenter()
-
     else:
-        # Advanced mode is deliberately imported lazily.
-        # Cellpose is an optional/heavier dependency.
         try:
             from src.segmentation.cellpose import CellposeSegmenter
-
-            segmenter = CellposeSegmenter()
-
+            segmenter = CellposeSegmenter(gpu=True, diameter=30.0)
         except ImportError as exc:
             raise HTTPException(
                 status_code=500,
-                detail=(
-                    "Advanced / Cellpose mode is unavailable. "
-                    "Make sure CellposeSegmenter is installed."
-                ),
+                detail="Advanced / Cellpose mode is unavailable. Make sure Cellpose is installed.",
             ) from exc
 
     # --------------------------------------------------------
-    # TRACKING / LINEAGE
+    # TRACKING / LINEAGE SETUP
     # --------------------------------------------------------
-
     tracker = CentroidTracker(
         max_distance=50.0,
         max_missed_frames=3,
     )
-
-    division_detector = DivisionDetector(
-        max_parent_daughter_distance=80.0,
-        temporal_window=5,
-        min_parent_length=3,
-        min_confidence=0.3,
-    )
-
-    lineage_reconstructor = LineageReconstructor(
-        division_detector=division_detector,
-    )
-
+    
+    lineage_reconstructor = LineageReconstructor()
     all_detections: list[list[Detection]] = []
-
-    # --------------------------------------------------------
-    # PER-FRAME ANALYSIS
-    # --------------------------------------------------------
-
     frame_statistics = []
 
     evaluation_frames = 0
@@ -665,28 +633,27 @@ def run_pipeline(
     detection_gt = 0
     detection_predictions = 0
 
+    # --------------------------------------------------------
+    # PER-FRAME SEGMENTATION
+    # --------------------------------------------------------
     for frame_idx in range(start_frame, end_frame):
-        volume = dataset.load_frame(
-            frame_idx,
-            sequence=sequence_id,
-        )
-
-        segmentation = segmenter.segment(volume)
+        volume = dataset.load_frame(frame_idx, sequence=sequence_id)
+        
+        try:
+            segmentation = segmenter.segment(volume, frame_index=frame_idx)
+        except TypeError:
+            segmentation = segmenter.segment(volume)
 
         detections: list[Detection] = []
-
         for cell in segmentation.detections:
+            det_id = getattr(cell, "detection_id", getattr(cell, "cell_id", 0))
             detections.append(
                 Detection(
-                    detection_id=cell.cell_id,
+                    detection_id=det_id,
                     centroid=cell.centroid,
                     area=cell.area,
-                    mask=cell.mask,
-                    confidence=getattr(
-                        cell,
-                        "confidence",
-                        1.0,
-                    ),
+                    mask=getattr(cell, "mask", None),
+                    confidence=getattr(cell, "confidence", 1.0),
                 )
             )
 
@@ -704,20 +671,10 @@ def run_pipeline(
             "f1": None,
         }
 
-        gt_path = find_segmentation_gt(
-            dataset_name,
-            sequence_id,
-            frame_idx,
-        )
-
+        gt_path = find_segmentation_gt(dataset_name, sequence_id, frame_idx)
         if gt_path is not None:
             gt_mask = load_gt_mask(gt_path)
-
-            metrics = evaluate_frame_detections(
-                detections,
-                gt_mask,
-            )
-
+            metrics = evaluate_frame_detections(detections, gt_mask)
             evaluation_frames += 1
 
             detection_gt += metrics["ground_truth"]
@@ -726,46 +683,25 @@ def run_pipeline(
             detection_fp += metrics["false_positives"]
             detection_fn += metrics["false_negatives"]
 
-            frame_stat.update(
-                {
-                    "groundTruth": metrics["ground_truth"],
-                    "truePositives": metrics["true_positives"],
-                    "falsePositives": metrics["false_positives"],
-                    "falseNegatives": metrics["false_negatives"],
-                    "precision": metrics["precision"],
-                    "recall": metrics["recall"],
-                    "f1": metrics["f1"],
-                }
-            )
+            frame_stat.update(metrics)
 
         frame_statistics.append(frame_stat)
 
     # --------------------------------------------------------
     # TRACKING
     # --------------------------------------------------------
-
     tracking_result = tracker.track(all_detections)
 
     tracks_data = {}
-
     for track_id, track in tracking_result.tracks.items():
         tracks_data[str(track_id)] = {
             "track_id": track.track_id,
             "positions": [
-                [float(x), float(y)]
-                for x, y in track.positions
+                [float(x), float(y)] for x, y in track.positions
             ],
-            "frames": [
-                int(frame)
-                for frame in track.frames
-            ],
-            "areas": [
-                float(area)
-                for area in getattr(track, "areas", [])
-            ],
-            "mean_confidence": float(
-                getattr(track, "mean_confidence", 1.0)
-            ),
+            "frames": [int(f) for f in track.frames],
+            "areas": [float(a) for a in getattr(track, "areas", [])],
+            "mean_confidence": float(getattr(track, "mean_confidence", 1.0)),
             "length": track.length,
             "start_frame": track.start_frame,
             "end_frame": track.end_frame,
@@ -774,94 +710,54 @@ def run_pipeline(
     # --------------------------------------------------------
     # LINEAGE
     # --------------------------------------------------------
-
-    lineage_result = lineage_reconstructor.reconstruct(
-        tracking_result
+    lineage_result = lineage_reconstructor.reconstruct(tracking_result)
+    lineage_data = (
+        lineage_result.to_dict()
+        if hasattr(lineage_result, "to_dict")
+        else lineage_result.to_json()
+        if hasattr(lineage_result, "to_json")
+        else {"nodes": [], "edges": [], "division_events": []}
     )
 
-    lineage_data = lineage_result.to_dict()
-
-    predicted_divisions = lineage_data.get(
-        "division_events",
-        [],
-    )
+    predicted_divisions = lineage_data.get("division_events", [])
 
     # --------------------------------------------------------
-    # GROUND TRUTH DIVISIONS
+    # GROUND TRUTH DIVISIONS & METRICS
     # --------------------------------------------------------
-
-    gt_lineage_path = find_tracking_gt(
-        dataset_name,
-        sequence_id,
-    )
-
+    gt_lineage_path = find_tracking_gt(dataset_name, sequence_id)
     gt_division_events = []
-
     if gt_lineage_path is not None:
-        gt_lineage = load_gt_lineage(
-            gt_lineage_path
-        )
+        gt_lineage = load_gt_lineage(gt_lineage_path)
+        gt_division_events = get_gt_division_events(gt_lineage)
 
-        gt_division_events = get_gt_division_events(
-            gt_lineage
-        )
-
-    division_metrics = evaluate_divisions(
-        predicted_divisions,
-        gt_division_events,
-    )
-
-    # --------------------------------------------------------
-    # GLOBAL DETECTION METRICS
-    # --------------------------------------------------------
+    division_metrics = evaluate_divisions(predicted_divisions, gt_division_events)
 
     global_precision = (
         detection_tp / (detection_tp + detection_fp)
-        if detection_tp + detection_fp
+        if detection_tp + detection_fp > 0
         else 0.0
     )
-
     global_recall = (
         detection_tp / (detection_tp + detection_fn)
-        if detection_tp + detection_fn
+        if detection_tp + detection_fn > 0
         else 0.0
     )
-
     global_f1 = (
-        2
-        * global_precision
-        * global_recall
-        / (global_precision + global_recall)
-        if global_precision + global_recall
+        2 * global_precision * global_recall / (global_precision + global_recall)
+        if global_precision + global_recall > 0
         else 0.0
     )
-
-    # --------------------------------------------------------
-    # DATASET / ANALYSIS SUMMARY
-    # --------------------------------------------------------
 
     total_tracks = len(tracks_data)
-
-    persistent_tracks = sum(
-        1
-        for track in tracks_data.values()
-        if track["length"] >= 2
-    )
-
+    persistent_tracks = sum(1 for t in tracks_data.values() if t["length"] >= 2)
     average_track_length = (
-        sum(track["length"] for track in tracks_data.values())
-        / total_tracks
+        sum(t["length"] for t in tracks_data.values()) / total_tracks
         if total_tracks
         else 0.0
     )
 
-    # --------------------------------------------------------
-    # FINAL RESPONSE
-    # --------------------------------------------------------
-
     return {
         "status": "success",
-
         "dataset": {
             "name": dataset_name,
             "sequence": sequence_id,
@@ -871,33 +767,25 @@ def run_pipeline(
             "framesProcessed": end_frame - start_frame,
             "totalFrames": max_frames,
         },
-
         "capabilities": {
-            "hasGroundTruth": gt_lineage_path is not None
-            or evaluation_frames > 0,
+            "hasGroundTruth": gt_lineage_path is not None or evaluation_frames > 0,
             "hasTrackingGroundTruth": gt_lineage_path is not None,
             "hasSegmentationGroundTruth": evaluation_frames > 0,
             "advancedAvailable": True,
         },
-
         "statistics": {
             "totalTracks": total_tracks,
             "persistentTracks": persistent_tracks,
             "averageTrackLength": average_track_length,
             "divisionEvents": len(predicted_divisions),
-            "groundTruthDivisionEvents": len(
-                gt_division_events
-            ),
+            "groundTruthDivisionEvents": len(gt_division_events),
         },
-
         "tracking": {
             "trackCount": total_tracks,
             "persistentTrackCount": persistent_tracks,
             "tracks": tracks_data,
         },
-
         "lineage": lineage_data,
-
         "evaluation": {
             "segmentation": {
                 "framesEvaluated": evaluation_frames,
@@ -910,22 +798,18 @@ def run_pipeline(
                 "recall": global_recall,
                 "f1": global_f1,
             },
-
             "division": division_metrics,
         },
-
         "frames": frame_statistics,
-
         "frameRange": {
             "start": start_frame,
             "end": end_frame - 1,
             "count": end_frame - start_frame,
         },
-
-    "summary": {
-        "trackCount": tracking_result.track_count,
-        "divisionCount": len(lineage_data.get("division_events", [])),
-    },
+        "summary": {
+            "trackCount": total_tracks,
+            "divisionCount": len(predicted_divisions),
+        },
     }
 
 

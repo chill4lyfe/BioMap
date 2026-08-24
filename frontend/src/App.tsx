@@ -1,15 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import {
   Database,
   Dna,
-  Layers3,
+  LayoutDashboard,
+  LogOut,
+  Menu,
   Play,
   RefreshCw,
   Sparkles,
   Upload,
 } from 'lucide-react';
 
+import { supabase } from './lib/supabaseClient';
 import { useBioMapStore } from './store/useBioMapStore';
+import { AuthPage } from './components/auth/AuthPage';
+import { Dashboard } from './components/dashboard/Dashboard';
 import { Dropdown } from './components/ui/Dropdown';
 import { CellCard } from './components/ui/CellCard';
 import { Timeline } from './components/ui/Timeline';
@@ -17,7 +23,6 @@ import { MicroscopeView } from './components/visualizer/MicroscopeView';
 import { LineageGraph } from './components/visualizer/LineageGraph';
 import QCReportModal from './components/QCReportModal';
 import QueryOverlayModal from './components/QueryOverlayModal';
-
 
 const API_BASE = 'http://localhost:8000';
 
@@ -41,13 +46,38 @@ function App() {
 
   const [metadataLoading, setMetadataLoading] = useState(false);
   const [error, setError] = useState('');
+  const [view, setView] = useState<'dashboard' | 'analysis'>('dashboard');
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+
+  const [session, setSession] = useState<Session | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
   const [isQCOpen, setIsQCOpen] = useState(false);
   const [isQueryOpen, setIsQueryOpen] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    loadDatasets();
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setAuthLoading(false);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setAuthLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!session) return;
+
+    loadDatasets();
+  }, [session]);
 
   useEffect(() => {
     if (!activeDataset) return;
@@ -133,9 +163,7 @@ function App() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(
-          data.detail || 'Pipeline analysis failed.'
-        );
+        throw new Error(data.detail || 'Pipeline analysis failed.');
       }
 
       setPipelineData(
@@ -146,12 +174,9 @@ function App() {
           division_events: [],
         }
       );
-
     } catch (err) {
       setError(
-        err instanceof Error
-          ? err.message
-          : 'Pipeline failed.'
+        err instanceof Error ? err.message : 'Pipeline failed.'
       );
     } finally {
       setAnalyzing(false);
@@ -172,13 +197,10 @@ function App() {
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch(
-        `${API_BASE}/api/datasets/upload`,
-        {
-          method: 'POST',
-          body: formData,
-        }
-      );
+      const response = await fetch(`${API_BASE}/api/datasets/upload`, {
+        method: 'POST',
+        body: formData,
+      });
 
       const data = await response.json();
 
@@ -188,11 +210,10 @@ function App() {
 
       await loadDatasets();
       setDataset(data.name);
+      setView('analysis');
     } catch (err) {
       setError(
-        err instanceof Error
-          ? err.message
-          : 'Dataset upload failed.'
+        err instanceof Error ? err.message : 'Dataset upload failed.'
       );
     } finally {
       setAnalyzing(false);
@@ -203,17 +224,65 @@ function App() {
     }
   }
 
+  async function logout() {
+    await supabase.auth.signOut();
+    setView('dashboard');
+    setWorkspaceMenuOpen(false);
+  }
+
   const trackCount = Object.keys(tracks).length;
   const divisionCount = lineage?.division_events?.length ?? 0;
 
   const averageConfidence =
     trackCount > 0
       ? Object.values(tracks).reduce(
-          (sum, track) =>
-            sum + (track.mean_confidence ?? 0),
+          (sum, track) => sum + (track.mean_confidence ?? 0),
           0
         ) / trackCount
       : null;
+
+  function openDatasetFromDashboard(dataset: string) {
+    setDataset(dataset);
+    setView('analysis');
+  }
+
+  if (authLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#02050b] text-slate-400">
+        Loading BioMap...
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <AuthPage />;
+  }
+
+  if (view === 'dashboard') {
+    return (
+      <>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".zip"
+          onChange={uploadDataset}
+          className="hidden"
+        />
+
+        <Dashboard
+          datasets={availableDatasets}
+          selectedDataset={activeDataset}
+          trackCount={trackCount}
+          divisionCount={divisionCount}
+          isAnalyzing={isAnalyzing}
+          onOpenDataset={openDatasetFromDashboard}
+          onOpenWorkspace={() => setView('analysis')}
+          onUploadDataset={() => fileInputRef.current?.click()}
+          onLogout={logout}
+        />
+      </>
+    );
+  }
 
   return (
     <div className="flex h-screen min-h-0 overflow-hidden bg-[#02050b] text-slate-200">
@@ -225,23 +294,58 @@ function App() {
         className="hidden"
       />
 
-      {/* SIDEBAR */}
       <aside className="flex w-[330px] shrink-0 flex-col border-r border-slate-800/80 bg-[#070b14]">
-        <header className="border-b border-slate-800/80 px-6 py-5">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-blue-500/20 bg-blue-500/10">
-              <Dna size={19} className="text-blue-400" />
+        <header className="relative border-b border-slate-800/80 px-6 py-5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-blue-500/20 bg-blue-500/10">
+                <Dna size={19} className="text-blue-400" />
+              </div>
+
+              <div>
+                <h1 className="font-display text-xl tracking-wider text-white">
+                  BIOMAP
+                </h1>
+                <p className="text-[9px] uppercase tracking-[0.2em] text-slate-600">
+                  Cellular Intelligence
+                </p>
+              </div>
             </div>
 
-            <div>
-              <h1 className="font-display text-xl tracking-wider text-white">
-                BIOMAP
-              </h1>
-              <p className="text-[9px] uppercase tracking-[0.2em] text-slate-600">
-                Cellular Intelligence
-              </p>
-            </div>
+            <button
+              type="button"
+              onClick={() => setWorkspaceMenuOpen((open) => !open)}
+              className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-800 bg-[#080d18] text-slate-400 transition hover:border-blue-500/40 hover:text-blue-300"
+              aria-label="Open workspace menu"
+            >
+              <Menu size={22} />
+            </button>
           </div>
+
+          {workspaceMenuOpen && (
+            <div className="absolute right-5 top-[70px] z-40 w-48 rounded-lg border border-slate-800 bg-[#080d18] p-2 shadow-2xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setView('dashboard');
+                  setWorkspaceMenuOpen(false);
+                }}
+                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400 transition hover:bg-blue-500/10 hover:text-blue-300"
+              >
+                <LayoutDashboard size={15} />
+                Dashboard
+              </button>
+
+              <button
+                type="button"
+                onClick={logout}
+                className="mt-1 flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-slate-400 transition hover:bg-red-500/10 hover:text-red-300"
+              >
+                <LogOut size={15} />
+                Logout
+              </button>
+            </div>
+          )}
         </header>
 
         <div className="flex-1 space-y-6 overflow-y-auto p-5">
@@ -283,9 +387,7 @@ function App() {
                 active={processingMode === 'advanced'}
                 title="Advanced"
                 subtitle="AI / Cellpose"
-                onClick={() =>
-                  setProcessingMode('advanced')
-                }
+                onClick={() => setProcessingMode('advanced')}
               />
             </div>
 
@@ -296,10 +398,7 @@ function App() {
             >
               {isAnalyzing ? (
                 <>
-                  <RefreshCw
-                    size={14}
-                    className="animate-spin"
-                  />
+                  <RefreshCw size={14} className="animate-spin" />
                   Processing
                 </>
               ) : (
@@ -309,13 +408,14 @@ function App() {
                 </>
               )}
             </button>
+
             <button
-             onClick={() => setIsQCOpen(true)}
-             disabled={trackCount === 0}
-             className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-indigo-500/30 bg-indigo-950/40 px-3 py-2 text-xs font-semibold text-indigo-300 hover:bg-indigo-900/60 hover:text-white transition-colors"
-           >
-             <span>🛡️</span>
-             <span>Run Anomaly Report</span>
+              onClick={() => setIsQCOpen(true)}
+              disabled={trackCount === 0}
+              className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-indigo-500/30 bg-indigo-950/40 px-3 py-2 text-xs font-semibold text-indigo-300 transition-colors hover:bg-indigo-900/60 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <span>🛡️</span>
+              <span>Run Anomaly Report</span>
             </button>
           </section>
 
@@ -325,16 +425,12 @@ function App() {
         <footer className="border-t border-slate-800/80 px-5 py-4">
           <div className="flex items-center justify-between text-[9px] font-mono uppercase tracking-widest text-slate-600">
             <span>Backend</span>
-            <span className="text-emerald-500">
-              ● Connected
-            </span>
+            <span className="text-emerald-500">● Connected</span>
           </div>
         </footer>
       </aside>
 
-      {/* WORKSPACE */}
       <main className="flex min-w-0 flex-1 flex-col">
-        {/* HEADER */}
         <header className="flex h-[76px] shrink-0 items-center justify-between border-b border-slate-800/80 bg-[#070b14]/90 px-7 backdrop-blur">
           <div>
             <div className="flex items-center gap-2">
@@ -351,17 +447,15 @@ function App() {
           </div>
 
           <div className="flex items-center gap-8">
-             <button
-             onClick={() => setIsQueryOpen(true)}
-             className="flex h-9 w-9 items-center justify-center rounded-full border border-blue-500/30 bg-blue-500/10 text-blue-400 transition hover:bg-blue-500/20 hover:text-blue-300"
-             title="Ask Researcher Query"
-              >
-            <Sparkles size={16} />
-          </button>
-            <Stat
-              label="Tracks"
-              value={String(trackCount)}
-            />
+            <button
+              onClick={() => setIsQueryOpen(true)}
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-blue-500/30 bg-blue-500/10 text-blue-400 transition hover:bg-blue-500/20 hover:text-blue-300"
+              title="Ask Researcher Query"
+            >
+              <Sparkles size={16} />
+            </button>
+
+            <Stat label="Tracks" value={String(trackCount)} />
 
             <Stat
               label="Mitosis"
@@ -393,8 +487,7 @@ function App() {
             {error}
           </div>
         )}
-      
-        {/* VISUAL WORKSPACE */}
+
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.35fr)_minmax(420px,0.9fr)]">
           <section className="relative min-h-0 border-r border-slate-800/80">
             <MicroscopeView />
@@ -405,22 +498,25 @@ function App() {
           </section>
         </div>
 
-        {/* TIMELINE */}
         <section className="shrink-0 border-t border-slate-800/80 bg-[#070b14] px-7 py-5">
           <Timeline />
         </section>
       </main>
-      {/* QC REPORT MODAL */}
+
       <QueryOverlayModal
         isOpen={isQueryOpen}
         onClose={() => setIsQueryOpen(false)}
-        onExecuteQuery={(result: any) => console.log('Researcher Query:', result)}
+        onExecuteQuery={(result: any) =>
+          console.log('Researcher Query:', result)
+        }
       />
-      <QCReportModal isOpen={isQCOpen} onClose={() => setIsQCOpen(false)}
-      datasetName={activeDataset}
-      processingMode={processingMode}
-   />
-        
+
+      <QCReportModal
+        isOpen={isQCOpen}
+        onClose={() => setIsQCOpen(false)}
+        datasetName={activeDataset}
+        processingMode={processingMode}
+      />
     </div>
   );
 }

@@ -252,6 +252,7 @@ class ClassicalSegmenter:
     def segment(
         self,
         volume: np.ndarray,
+        frame_index: int = 0,
     ) -> SegmentationResult:
 
         self._validate_volume(volume)

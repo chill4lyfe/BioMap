@@ -23,6 +23,11 @@ A college project built for the SIH internal round to turn time-lapse microscopy
 
 ---
 
+# DEMO
+https://github.com/user-attachments/assets/6103e15a-0b81-4c9f-a3ec-aee367c46a63
+
+---
+
 ## About the Project
 
 **BioMap** is our prototype for analyzing 3D time-lapse microscopy datasets and presenting the results in a form that is easier to inspect than a collection of scripts and static plots.
@@ -32,11 +37,6 @@ The system takes microscopy image sequences through preprocessing, cell segmenta
 The main idea was to keep the analysis pipeline modular while still making the final result practical enough for a short live demonstration.
 
 > **Project context:** This project was developed for our college-level Smart India Hackathon internal round. It is a working prototype only.
-
----
-
-# DEMO
-
 
 ---
 
